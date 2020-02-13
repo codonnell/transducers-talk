@@ -2,1102 +2,224 @@
   (:require [clojure.core.async :as a]
             [clojure.repl :refer [doc source]]))
 
+;; What is a transducer? A transducer is a function that takes a reducing function and returns a reducing function
 
+;; What is a reducing function? A function that you would pass to `reduce`
 
+(reduce conj [] (range 5))
 
+(reduce + 0 (range 5))
 
+;; A reducing function takes an accumulated value and an item, and returns a new accumulated value
 
+(defn conj-when-odd [acc x]
+  (if (odd? x)
+    (conj acc x)
+    acc))
 
+(reduce conj-when-odd [] (range 5))
 
+;; Why don't you use filter?
 
+(reduce conj [] (filter odd? (range 5)))
 
+(->> (range 5)
+  (filter odd?)
+  (reduce conj []))
 
+(->> (range 5)
+  (filter odd?)
+  (map #(* % 2))
+  (reduce conj []))
 
+(->> (range 5)
+  (filter odd?)
+  (map #(* % 2))
+  (reduce + 0))
 
+;; How can we make the transformation reducing function-agnostic? How can we chain transformations?
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(def my-ints (range 20))
-
-;; Take only the odd integers from `my-ints` and return a vector of each of them doubled.
-;; Do this without allocating any intermediate sequences.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(def times2 #(* % 2))
-
-;; "Old school" way
-
-(->> my-ints
-     (filter odd?)
-     (map times2)
-     vec)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(->> my-ints
-     (filter odd?) ; intermediate sequence
-     (map times2) ; intermediate sequence
-     vec)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(reduce (fn [nums x]
-          (if (odd? x)
-            (conj nums (times2 x))
-            nums))
-        [] my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-;; Want these to be _composable_
-
-;; conj -> conj only odd values
-;;      -> conj only odd values and times2 those
-;; Want functions that transform conj to a new _reducing function_
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(defn conj-when-odd [nums v]
-  (if (odd? v)
-    (conj nums v)
-    nums))
-
-(reduce conj-when-odd [] my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+;; This is a transducer!
 (defn filter-odd [rf]
-  (fn [nums v]
-    (if (odd? v)
-      (rf nums v)
-      nums)))
+  (fn [acc x]
+    (if (odd? x)
+      (rf acc x)
+      acc)))
 
-(reduce (filter-odd conj) [] my-ints)
+(reduce (filter-odd conj) [] (range 5))
 
+(reduce (filter-odd +) 0 (range 5))
 
+(defn map-double [rf]
+  (fn [acc x]
+    (rf acc (* x 2))))
 
+(reduce (map-double (filter-odd conj)) [] (range 5))
 
+;; Replace rf with conj-when-odd
+(defn map-double [conj-when-odd]
+  (fn [acc x]
+    (conj-when-odd acc (* x 2))))
 
+(defn filter-odd [conj-double]
+  (fn [acc x]
+    (if (odd? x)
+      (conj-double acc x)
+      acc)))
 
+(reduce (filter-odd (map-double conj)) [] (range 5))
 
+(reduce (filter-odd (map-double +)) 0 (range 5))
 
+;; Rule of thumb: transducers chain from the outside in
 
+;; EXERCISE - Duplicate all the doubled values [2 6] -> [[2 2] [6 6]]
 
+(defn map-duplicate [rf]
+  (fn [acc x]
+    (rf acc [x x])))
 
+(reduce (filter-odd (map-double (map-duplicate conj))) [] (range 5))
+(reduce ((comp filter-odd map-double map-duplicate) conj) [] (range 5))
 
+(defn map* [f]
+  (fn [rf]
+    (fn [acc x]
+      (rf acc (f x)))))
 
+(reduce ((comp filter-odd (map* #(* % 2)) (map* (fn [x] [x x]))) conj) [] (range 5))
 
+(defn filter* [pred]
+  (fn [rf]
+    (fn [acc x]
+      (if (pred x)
+        (rf acc x)
+        acc))))
 
+(reduce ((comp (filter* odd?) (map* #(* % 2)) (map* (fn [x] [x x]))) conj) [] (range 5))
+(reduce ((comp (filter odd?) (map #(* % 2)) (map (fn [x] [x x]))) conj) [] (range 5))
 
+(transduce (comp (filter odd?) (map #(* % 2)) (map (fn [x] [x x]))) conj [] (range 5))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(reduce (filter-odd +) 0 my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(defn map-times2 [rf]
-  (fn [nums v]
-    (rf nums (times2 v))))
-
-(reduce (map-times2 conj) [] my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(reduce (map-times2 (filter-odd conj)) [] my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-;; Replace rf with (filter-odd conj) = conj-when-odd
-(fn [nums v]
-  (conj-when-odd nums (times2 v)))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-;; We're calling times2 first! Transducers on the "outside" are called first
-
-(reduce (filter-odd (map-times2 conj)) [] my-ints)
-
-(reduce (filter-odd (map-times2 +)) 0 my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(reduce ((comp filter-odd
-               map-times2)
-         conj)
-        []
-        my-ints)
-
-(transduce (comp filter-odd
-                 map-times2)
-           conj [] my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(defn filter-odd [rf]
-  (fn
-    ([] (rf))
-    ([result] (rf result))
-    ([result v]
-     (if (odd? v)
-       (rf result v)
-       result))))
-
-(defn map-times2 [rf]
-  (fn
-    ([] (rf))
-    ([result] (rf result))
-    ([result v]
-     (rf result (times2 v)))))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(transduce (comp (filter odd?)
-                 (map times2))
-           + 0 my-ints)
-
-(transduce (comp (filter odd?)
-                 (map times2))
-           conj [] my-ints)
+;; transduce + conj = into
 
 (into []
-      (comp (filter odd?)
-            (map times2))
-      my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(def filter-odd-and-times2-xf (comp (filter odd?)
-                                    (map times2)))
-
-(transduce filter-odd-and-times2-xf
-           + 0 my-ints)
-
-(into [] filter-odd-and-times2-xf my-ints)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(def ch (a/chan 1 filter-odd-and-times2-xf))
-
-(a/onto-chan ch my-ints true)
-
-(loop []
-  (let [val (a/<!! ch)]
-    (when val
-      (println val)
-      (recur))))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(defn string-append
+  (comp
+    (filter odd?)
+    (map #(* % 2))
+    (map (fn [x] [x x])))
+  (range 5))
+
+(->> (range 5)
+  (filter odd?)
+  (map #(* % 2))
+  (map (fn [x] [x x]))
+  vec)
+
+(defn batman-rf
   ([] (StringBuilder.))
-  ([acc] (.toString acc))
-  ([acc input] (.append acc input)))
+  ([sb] (-> sb (.append " BATMAN!") (.toString)))
+  ([sb x] (.append sb x)))
 
-(transduce filter-odd-and-times2-xf
-           string-append my-ints)
+(transduce (interpose "A") batman-rf (repeat 10 "na"))
 
-(transduce (comp filter-odd map-times2 (interpose ","))
-           string-append my-ints)
+(->> "na"
+  (repeat 10)
+  (interpose "A")
+  (apply str)
+  (#(str % " BATMAN!!!")))
 
-(def filter-odd-and-times2-and-remove-even-indices-xf
-  (comp (filter odd?)
-        (map times2)
-        (map-indexed (fn [idx v] [idx v]))
-        (remove (fn [[idx v]] (even? idx)))
-        (map (fn [[_ v]] v))))
+(transduce (partition-all 3) conj [] (range 5))
 
-(into [] filter-odd-and-times2-and-remove-even-indices-xf my-ints)
+(defn partition-all
+  [^long n]
+  (fn [rf]
+    (let [a (java.util.ArrayList. n)]
+      (fn
+        ([] (rf))
+        ([result]
+         (let [result (if (.isEmpty a)
+                        result
+                        (let [v (vec (.toArray a))]
+                          ;;clear first!
+                          (.clear a)
+                          (unreduced (rf result v))))]
+           (rf result)))
+        ([result input]
+         (.add a input)
+         (if (= n (.size a))
+           (let [v (vec (.toArray a))]
+             (.clear a)
+             (rf result v))
+           result))))))
 
-(transduce filter-odd-and-times2-and-remove-even-indices-xf + 0 my-ints)
+;; core.async mini-tutorial
 
+;; (def ch (a/chan 1 (comp
+;;                     (filter odd?)
+;;                     (map #(* % 2))
+;;                     (map (fn [x] [x x])))))
 
+;; (a/go
+;;   (a/>! ch 3)
+;;   (println "Put complete"))
 
+;; (a/go
+;;   (let [v (a/<! ch)]
+;;     (println "Take complete" v)))
 
+;; (a/close! ch)
 
+;; PROBLEM: We have some data streaming in on a core.async channel. We would like to batch that data for efficient processing, but we would like to ensure that data remains buffered in the channel for at most 5 seconds.
 
+;; Solution: use a transducer!
+;; * Write a transducer that acts like `partition-all` but flushes its buffer when it receives the item `:flush`
+;; * Put `:flush` into the channel every 5 seconds
 
+(defn partition-all-with-flush
+  [^long n]
+  (fn [rf]
+    (let [a (java.util.ArrayList. n)]
+      (fn
+        ([] (rf))
+        ([result]
+         (let [result (if (.isEmpty a)
+                        result
+                        (let [v (vec (.toArray a))]
+                          ;;clear first!
+                          (.clear a)
+                          (unreduced (rf result v))))]
+           (rf result)))
+        ([result input]
+         (when-not (= :flush input)
+           (.add a input))
+         (if (and (or (= :flush input) (= n (.size a)))
+               (pos? (.size a)))
+           (let [v (vec (.toArray a))]
+             (.clear a)
+             (rf result v))
+           result))))))
 
+(def flush-danger (mapcat (fn [x]
+                            (if (= x :danger)
+                              [x :flush]
+                              [x]))))
 
+(def ch (a/chan 5 (comp flush-danger (partition-all-with-flush 3))))
 
+(a/go
+  (loop []
+    (a/>! ch :flush)
+    (a/<! (a/timeout 5000))
+    (recur)))
 
+(a/go
+  (loop [v (a/<! ch)]
+    (println v)
+    (when (some? v)
+      (recur (a/<! ch)))))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-;; You can still use transducers with lazy sequences!
-
-(take 10 (sequence filter-odd-and-times2-and-remove-even-indices-xf (range)))
+(a/go
+  (dotimes [_ 10]
+    (a/>! ch 1))
+  (a/>! ch :danger))
